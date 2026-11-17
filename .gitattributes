@@ -1,0 +1,28 @@
+# 统一换行符，避免 Windows 上 autocrlf 造成的无意义 diff 与警告。
+# 前端与 CI 文件一律 LF；PowerShell 脚本保留 CRLF。
+* text=auto
+
+*.js      text eol=lf
+*.css     text eol=lf
+*.html    text eol=lf
+*.json    text eol=lf
+*.md      text eol=lf
+*.yml     text eol=lf
+*.yaml    text eol=lf
+*.sh      text eol=lf
+
+.gitattributes text eol=lf
+.gitignore     text eol=lf
+
+*.ps1     text eol=crlf
+
+# 二进制，别让 git 试图做文本 diff
+*.png     binary
+*.jpg     binary
+*.jpeg    binary
+*.gif     binary
+*.pdf     binary
+*.xlsx    binary
+*.zip     binary
+*.crx     binary
+*.pem     binary
