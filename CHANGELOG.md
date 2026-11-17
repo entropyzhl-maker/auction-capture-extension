@@ -14,6 +14,32 @@
 > - 当前版本号见 manifest.json。
 
 ---
+
+## 当前版本速览（v0.10.0）
+
+> 这一节**不是历史 changelog**，而是把代码现状（`manifest.json`、`background.js`、
+> `common.js`、`report-export.js`、`md/auction-extraction-spec.md`）逐项核对后整理的
+> 「现在是什么样」。v0.6.4 之后的逐版改动记录没有保留下来，下面的历史正文停在 v0.6.4。
+
+| 维度 | 当前实况 |
+|---|---|
+| 版本号 | `manifest.json` = `0.10.0`；`common.js` 的 `BUILD_STAMP` = `2026-11-11.1`（用于识破浏览器加载了缓存旧脚本，握手不一致会在界面上报警） |
+| 采集入口 | 单页「采集到池」／列表页「截止点采集」／「按水位增量采集」，三条都在 `background.js` 的后台任务里跑，关掉弹窗继续 |
+| 水位记忆 | 四通道各记一条水位：`阿里\|住宅`、`阿里\|商业`、`京东\|住宅`、`京东\|商业`，可单通道「清空本通道水位」退回首次采集 |
+| 就绪判据 | 单条最多等 40s；正文 ≥400 字、内容指纹连续 5 次（5×400ms≈2s）不变、页面至少停留 2.5s、键值对/表格 ≥12 行；静默但关键价格字段没齐时最多再等 12s 兜底，采到缺价会补等 1.5s 重采一次 |
+| 解析并发 | `DEFAULT_PARSE_CONCURRENCY = 10`，worker 池 + 共享游标领取，可在弹窗里改 |
+| 模型配置 | 默认 `https://api.deepseek.com/v1/chat/completions` + 模型 id `deepseek-flash`（即 DeepSeek-V4.1-Flash；写 `deepseek-v4.1-flash` 会被 400） |
+| 密钥 | **不内置任何密钥**，首次安装 `apiToken` 为空，用户自己填，存本机 `chrome.storage.local` |
+| 抽取规范 | `md/auction-extraction-spec.md` v1.5，`skillVersion` = `judicial-auction-extractor/0.1`。规范改了会在安装/启动时同步覆盖内置旧版 |
+| 字段口径 | 抽取 **20 个字段**（对应总表 A~T）；导出 **16 列**排版表（户型/捡漏金额/折扣/单价这 4 个公式列由表格自己算，插件留空） |
+| 导出引擎 | `report-export.js` 纯手搓：ZIP(store+CRC32)+OOXML 生成 xlsx，Canvas 画表→JPEG→手写 PDF 封装。零外部依赖，不依赖 Python / LibreOffice |
+| 导出特性 | 按区划分组、小区名带超链接（xlsx 可点、PDF 是 `/Link` 注释）、16 列固定列宽 |
+| 池管理 | `pool.html` + `pool.js` 承载「展开管理」：看全部 / 勾选 / 删除 / 逐字段编辑 / 「重试所有未解析」 |
+| 证据开关 | `includeHtml` 默认 false、`includeJson` 默认 true、`includeScreenshot` 默认 false |
+| 权限 | MV3：`activeTab` `tabs` `scripting` `storage` `unlimitedStorage` `downloads` `alarms`；host 只固定要 `api.deepseek.com`，其余网站走 `optional_host_permissions` 运行时申请 |
+| 站点支持 | 京东拍卖（`paimai.jd.com`）、阿里司法拍卖 |
+
+---
 ## 法拍页面采集器 v0.6.4
 
 这是一个 Chrome / Edge Manifest V3 扩展，用于把法拍页面**多次采集进采集池**，再**一次批量解析、一次导出**成结构化表格。
