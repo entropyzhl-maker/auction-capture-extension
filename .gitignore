@@ -1,0 +1,51 @@
+# ---------- 依赖 ----------
+node_modules/
+package-lock.json.bak
+
+# ---------- 日志 ----------
+*.log
+logs/
+
+# ---------- 系统 / 编辑器垃圾 ----------
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+*~
+
+# ---------- 打包产物（扩展 zip / crx / 私钥，绝不入库） ----------
+*.crx
+*.pem
+*.zip
+*.xpi
+dist/
+build/
+
+# ---------- 本地配置与密钥 ----------
+*.key
+*.env
+.env.*
+secrets*
+config.local.*
+local.settings.*
+*.secret.json
+
+# ---------- 采集产物 / 临时目录 ----------
+_tmp/
+tmp/
+out/
+exports/
+Downloads/
+*.auctionpkg.json
+auction-pool/
+
+# ---------- 导出结果（本地生成的表格，不入库） ----------
+法拍汇总-*.xlsx
+法拍汇总-*.pdf
+
+# ---------- 其它 ----------
+*.bak
+*.orig
+*.rej

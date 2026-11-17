@@ -1,0 +1,298 @@
+/* ------------------------------------------------------------
+   纯黑白主题（v0.5.5）
+   只有黑、白、灰三档，不引入任何彩色：强调靠「明度反差 + 反白」，
+   不靠色相。状态标签也只用底色深浅和描边区分。
+   边框统一 1px：旧版 page-card 用 4px 上边、pool-card 用 3px 左边，
+   四个角粗细不一致，看起来就是「框歪了」。
+   ------------------------------------------------------------ */
+:root {
+  color-scheme: dark;
+  font-family: "Inter", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+  --bg: #242424;
+  --surface: #2c2c2c;
+  --surface-2: #343434;
+  --surface-3: #3e3e3e;
+  --line: #464646;
+  --line-soft: #383838;
+  --text: #ededed;
+  --text-dim: #9a9a9a;
+  --text-mute: #6b6b6b;
+  --invert-bg: #ededed;
+  --invert-fg: #242424;
+  color: var(--text);
+  /* 弹窗窗口本身是浏览器画的方形窗口，radius 加在 html/body 上只会被窗口边缘盖住。
+     所以底色透明、四角留白，把背景和圆角都交给 .app 这一层去画。 */
+  background: transparent;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  width: 390px;
+  min-height: 520px;
+  overflow-x: hidden;
+  background: transparent;
+  color: var(--text);
+}
+
+button, input, select { font: inherit; color: inherit; }
+
+/* 弹窗的外壳：背景 + 圆角都画在这一层 */
+.app {
+  min-height: 100vh;
+  padding: 16px 16px 20px;
+  border-radius: 12px;
+  background: var(--bg);
+}
+
+/* ---------------- 头部 ---------------- */
+header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+h1 { margin: 0; font-size: 19px; font-weight: 700; color: var(--text); letter-spacing: -.01em; }
+h3 { margin: 0; font-size: 14px; font-weight: 600; color: var(--text); }
+.icon-button { border: 0; background: transparent; color: var(--text-dim); cursor: pointer; padding: 5px; min-height: 26px; }
+
+/* ---------------- 卡片：统一 1px 细边 ---------------- */
+.card {
+  margin-bottom: 10px;
+  padding: 13px 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+}
+
+.page-card { position: relative; overflow: hidden; }
+.platform-mark {
+  display: inline-flex;
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-dim);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .02em;
+}
+h2 {
+  margin: 9px 0 5px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.45;
+  color: var(--text);
+  word-break: break-word;
+}
+.url {
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-mute);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------------- 采集池 ---------------- */
+.result-head { display: flex; align-items: center; justify-content: space-between; }
+.badge {
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-3);
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+}
+/* 池里还有「待解析」的条目时，用明度差强调，不引入彩色 */
+.badge-accent { border-color: var(--text-mute); color: var(--text); }
+.hint { margin: 7px 0 0; color: var(--text-mute); font-size: 10px; line-height: 1.6; }
+
+.pool-list {
+  list-style: none;
+  margin: 9px 0 0;
+  padding: 0;
+  max-height: 168px;
+  overflow: auto;
+  border: 1px solid var(--line-soft);
+  border-radius: 11px;
+  background: var(--bg);
+}
+.pool-item { display: flex; align-items: center; gap: 7px; padding: 7px 9px; border-bottom: 1px solid var(--line-soft); font-size: 12px; }
+.pool-item:last-child { border-bottom: 0; }
+.pool-item:hover { background: var(--surface-2); }
+.pool-name { flex: 1; min-width: 0; overflow: hidden; color: var(--text); text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.pool-name:hover { text-decoration: underline; }
+.pool-tag { flex: none; padding: 2px 7px; border-radius: 999px; font-size: 10px; font-weight: 600; cursor: pointer; }
+/* 三种状态只用明度区分：已解析=中灰底，待解析=描边，失败=反白 */
+.tag-parsed { border: 1px solid transparent; background: var(--surface-3); color: var(--text); }
+.tag-raw { border: 1px solid var(--line); background: transparent; color: var(--text-dim); }
+.tag-error { border: 1px solid var(--invert-bg); background: var(--invert-bg); color: var(--invert-fg); }
+.pool-del {
+  flex: none;
+  width: 20px; height: 20px; min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-mute);
+  font-size: 15px; line-height: 1;
+  cursor: pointer;
+}
+.pool-del:hover { color: var(--text); }
+.pool-more { padding: 7px 9px; color: var(--text-mute); font-size: 11px; }
+
+.pool-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 11px; }
+.pool-links { display: flex; flex-direction: column; gap: 1px; margin-top: 8px; }
+.link-button {
+  min-height: 22px; padding: 3px 0;
+  border: 0; background: transparent;
+  color: var(--text-dim);
+  font-size: 11px; font-weight: 500;
+  text-align: left; cursor: pointer;
+}
+.link-button:hover { color: var(--text); text-decoration: underline; }
+
+/* ---------------- 进度 ---------------- */
+.parse-progress { margin-top: 10px; }
+.progress-track { height: 6px; border-radius: 999px; background: var(--surface-3); overflow: hidden; }
+#progressBar { height: 100%; width: 0; border-radius: 999px; background: var(--text); transition: width .2s ease; }
+#progressText { display: block; margin-top: 5px; color: var(--text-mute); font-size: 10px; }
+
+/* ---------------- 状态 ---------------- */
+.status { min-height: 32px; margin: 8px 1px; color: var(--text-dim); font-size: 11px; line-height: 1.55; }
+/* 黑白界面里没有红色可用：失败用最亮的白 + 加粗来抢注意力 */
+.status.error { color: #ffffff; font-weight: 600; }
+.status.success { color: var(--text-dim); }
+
+/* ---------------- 按钮 ---------------- */
+button {
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background .12s ease, border-color .12s ease, color .12s ease;
+}
+button.primary { border-color: var(--invert-bg); background: var(--invert-bg); color: var(--invert-fg); }
+button:disabled { cursor: not-allowed; opacity: .38; }
+button:not(:disabled):hover { background: var(--surface-3); border-color: #464646; }
+button.primary:not(:disabled):hover { background: #ffffff; border-color: #ffffff; color: #000; }
+button:focus-visible { outline: 1px solid var(--text); outline-offset: 2px; }
+
+.capture-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+.capture-button {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  width: 100%; min-height: 46px;
+  border: 1px solid var(--invert-bg);
+  border-radius: 14px;
+  background: var(--invert-bg);
+  color: var(--invert-fg);
+  font-size: 15px; font-weight: 700; letter-spacing: .01em;
+}
+.capture-button:hover:not(:disabled) { background: #ffffff; border-color: #ffffff; color: #000; }
+.capture-button.alt {
+  border-color: var(--line);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.capture-button.alt:hover:not(:disabled) { background: var(--surface-3); border-color: #464646; color: var(--text); }
+.capture-button:disabled { opacity: .38; }
+
+/* ---------------- 截止点采集 ---------------- */
+.sort-card { margin-top: 8px; }
+.sort-card h3 { margin: 0 0 5px; font-size: 13px; }
+.sort-card button { width: 100%; margin-top: 8px; }
+.sort-cutoff { display: block; margin-top: 9px; color: var(--text-dim); font-size: 11px; }
+.sort-cutoff select {
+  display: block;
+  width: 100%;
+  min-height: 32px;
+  margin-top: 5px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--text);
+}
+.sort-confirm { display: flex; gap: 7px; align-items: center; margin-top: 8px; color: var(--text-dim); font-size: 11px; }
+.sort-confirm input { accent-color: var(--text); }
+
+/* ---------------- 池内编辑（整屏覆盖） ---------------- */
+.edit-panel {
+  position: fixed; inset: 0; z-index: 10;
+  display: none; flex-direction: column;
+  padding: 16px;
+  background: var(--bg);
+}
+body.editing { height: 580px; overflow: hidden; }
+body.editing .app { display: none; }
+body.editing .edit-panel { display: flex; }
+.edit-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.edit-head strong { display: block; font-size: 14px; font-weight: 600; color: var(--text); }
+.edit-fields { flex: 1; display: grid; grid-template-columns: 1fr; gap: 7px; margin-top: 10px; overflow: auto; }
+.field { display: flex; align-items: center; gap: 8px; }
+.field span { flex: none; width: 86px; color: var(--text-mute); font-size: 11px; }
+.field input {
+  flex: 1; min-width: 0;
+  min-height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 12px;
+}
+.field input:focus { outline: none; border-color: #575757; box-shadow: 0 0 0 2px rgba(255, 255, 255, .08); }
+.edit-warnings {
+  max-height: 84px;
+  margin-top: 8px;
+  padding: 8px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--text-dim);
+  font-size: 10px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+.edit-actions { display: flex; align-items: center; gap: 10px; padding-top: 10px; }
+.edit-actions button { min-width: 132px; }
+
+/* ---------------- 模型配置 ---------------- */
+.settings-card { margin-top: 8px; }
+.settings-card h3 { margin: 0 0 4px; font-size: 13px; }
+.settings-body { display: grid; grid-template-columns: 1fr; gap: 7px; margin-top: 9px; }
+.settings-body .field span { width: 64px; }
+.settings-body .field input { flex: 1; min-width: 0; }
+.settings-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.settings-actions button.primary { min-width: 96px; }
+.settings-actions .link-button { flex: none; padding: 6px 2px; }
+#cfgMsg { white-space: pre-wrap; word-break: break-all; }
+#cfgMsg.ok { color: var(--text); }
+#cfgMsg.bad { color: #ffffff; font-weight: 600; }
+.badge-warn { border-color: var(--text-mute); color: var(--text); }
+
+/* ---------------- 握手失败提示 ---------------- */
+.diag {
+  margin: 0 1px 8px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.diag strong { display: block; margin-bottom: 4px; font-size: 12px; color: #ffffff; }
+.diag p { margin: 0; }
+.diag .diag-detail { margin-top: 4px; color: var(--text-mute); font-size: 10px; word-break: break-all; }
+.build-tag { margin: 2px 1px 0; color: var(--text-mute); font-size: 10px; text-align: right; }
+
+/* 深色滚动条（同样只用灰阶） */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: 999px; background: #464646; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background: #5a5a5a; background-clip: padding-box; }

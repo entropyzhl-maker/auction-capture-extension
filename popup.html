@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>法拍采集器</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main class="app">
+    <header>
+      <h1>法拍采集器</h1>
+    </header>
+
+    <div id="diag" class="diag" hidden></div>
+
+    <section id="pageCard" class="card page-card">
+      <span class="platform-mark" id="platformMark">待识别</span>
+      <h2 id="pageTitle">读取当前页面中…</h2>
+      <p id="pageUrl" class="url"></p>
+    </section>
+
+    <section id="poolCard" class="card pool-card">
+      <div class="result-head">
+        <h3>采集池</h3>
+        <span id="poolBadge" class="badge">0 条</span>
+      </div>
+      <p id="poolSummary" class="hint">逐页点「采集到池」，攒够了一次解析、一次导出。</p>
+
+      <ul id="poolList" class="pool-list"></ul>
+
+      <div id="parseProgress" class="parse-progress" hidden>
+        <div class="progress-track"><div id="progressBar"></div></div>
+        <span id="progressText"></span>
+      </div>
+
+      <div class="pool-buttons">
+        <button id="parseButton" type="button">解析字段</button>
+        <button id="exportButton" class="primary" type="button" title="导出16列排版xlsx + PDF（公式列算好、小区名可点、按区划分组，全部扩展内置生成）">一次导出 xlsx + PDF</button>
+      </div>
+      <div class="pool-links">
+        <button id="stopButton" class="link-button" type="button" hidden>停止解析</button>
+        <button id="logButton" class="link-button" type="button">导出操作日志</button>
+        <button id="manageButton" class="link-button" type="button">展开管理（看全部 / 勾选 / 删除）</button>
+      </div>
+    </section>
+
+    <!-- 模型配置：只填密钥。模型已锁定为 DeepSeek V4.1 Flash，不开放改 -->
+    <section id="settingsCard" class="card settings-card">
+      <div class="result-head">
+        <h3>DeepSeek 密钥</h3>
+        <span id="keyStatus" class="badge">未配置</span>
+      </div>
+      <div class="settings-body">
+        <label class="field">
+          <span>API Key</span>
+          <input id="cfgToken" type="password" spellcheck="false" autocomplete="off" placeholder="sk-...">
+        </label>
+      </div>
+      <div class="settings-actions">
+        <button id="cfgSave" class="primary" type="button">保存</button>
+        <button id="cfgTest" type="button">测试</button>
+        <button id="cfgClear" class="link-button" type="button">清除</button>
+      </div>
+      <p id="cfgMsg" class="hint" hidden></p>
+    </section>
+
+    <div id="status" class="status" role="status">准备就绪</div>
+    <p id="buildTag" class="build-tag"></p>
+
+    <div class="capture-actions">
+      <button id="captureButton" class="capture-button" type="button">采集到池</button>
+      <button id="cutoffButton" class="capture-button alt" type="button"
+              title="按“最新发布”选一个截止项，把截止项及之前的一批连续采进池">截止点采集</button>
+    </div>
+
+    <section id="sortCard" class="card sort-card" hidden>
+      <h3>按“最新发布”选择截止位置</h3>
+      <p id="sortHint" class="hint">先在网页上手动选择“最新发布”排序；只处理当前页，截止项计入处理范围。</p>
+      <label class="sort-confirm"><input id="latestSortConfirmed" type="checkbox">我已在网页选择“最新发布”排序</label>
+
+      <label class="sort-cutoff" id="laneWrap">
+        采集通道
+        <select id="laneType">
+          <option value="">自动识别</option>
+          <option value="住宅">住宅</option>
+          <option value="商业">商业</option>
+        </select>
+      </label>
+      <p id="watermarkInfo" class="hint">水位：未记录</p>
+
+      <button id="readSortButton" type="button">读取当前列表顺序</button>
+      <label id="sortCutoffWrap" class="sort-cutoff" hidden>
+        截止标的
+        <select id="sortCutoff"></select>
+      </label>
+      <p id="sortPreview" class="hint"></p>
+      <button id="sortRunButton" class="primary" type="button" hidden>采集截止项及之前（仅入池）</button>
+      <button id="wsRunButton" class="primary" type="button" hidden>按水位增量采集（仅入池）</button>
+      <button id="wsClearButton" type="button" hidden>清空本通道水位</button>
+    </section>
+  </main>
+
+  <section id="editPanel" class="edit-panel" hidden>
+    <header class="edit-head">
+      <div>
+        <strong id="editTitle">编辑记录</strong>
+        <p id="editUrl" class="url"></p>
+      </div>
+      <button id="editClose" class="icon-button" type="button">返回</button>
+    </header>
+    <div id="editWarnings" class="edit-warnings" hidden></div>
+    <div id="editFields" class="edit-fields"></div>
+    <div class="edit-actions">
+      <button id="editSave" class="primary" type="button">保存修改</button>
+      <span id="editHint" class="hint"></span>
+    </div>
+  </section>
+
+  <script src="common.js"></script>
+  <script src="report-export.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

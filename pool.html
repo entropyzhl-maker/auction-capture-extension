@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="zh-CN" data-page-node-id="Cu7h0SyjvW5A8paoCXmdwj">
+<head data-page-node-id="w1Gj9R9MEcuVlCdM4OPkQA">
+  <meta charset="utf-8" data-page-node-id="zNhsCdcdnfIlqGc7Z9lymK">
+  <meta name="viewport" content="width=device-width, initial-scale=1" data-page-node-id="qgE9PpzzPQIn63accl1Z7r">
+  <title>法拍采集池</title>
+  <link rel="stylesheet" href="pool.css" data-page-node-id="OX4OsBIotk2YhVxZORV4xZ">
+</head>
+<body data-page-node-id="6FMzVuOxtNKrNH9u7RUp1j">
+  <header class="topbar" data-page-node-id="Czitbf22HYyOFkXXEnon7B">
+    <div class="brand" data-page-node-id="aWIrCHWxQkLXWrpQ9zszhk">
+      <p class="eyebrow" data-page-node-id="Qng1E22RyO8tzGD3SAOFKQ">AUCTION POOL</p>
+      <h1 data-page-node-id="XXMwJ5kZbIdD0ybflfPBws">法拍采集池</h1>
+    </div>
+    <div id="stats" class="stats" data-page-node-id="OU8sLC33holEI7Y3a0PKmq"></div>
+  </header>
+
+  <div id="diag" class="diag" hidden data-page-node-id="Omx1j23B5LFpz1BBnsjdDi"></div>
+
+  <section class="toolbar" data-page-node-id="ctfMadMCb1bg4BuJl15DYj">
+    <div class="group" data-page-node-id="vUb9BpjHrqu98oZA3QyHhs">
+      <span class="group-label" data-page-node-id="40U029qTjvwItsscKc8MZ1">选择</span>
+      <button id="selectAll" type="button" data-page-node-id="s85GD3P2FSedzrf01Wg7Fr">全选</button>
+      <button id="selectInvert" type="button" data-page-node-id="6WoCRErzDJF1IS02la9nDt">反选</button>
+      <button id="selectNone" type="button" data-page-node-id="lyA9nhnuUfZMmfLLAFb4uq">清空选择</button>
+    </div>
+    <div class="group" data-page-node-id="G1W6FbVMRHMRiPN9f4dvzv">
+      <span class="group-label" data-page-node-id="cflGcd1cV6qAu5GZ0xqv0i">解析</span>
+      <button id="parseSelected" class="primary-soft" type="button" data-page-node-id="WtM0QXnA4eDGGZzST40JTp">解析选中</button>
+      <button id="retryUnparsed" type="button" data-page-node-id="w7APGTU2uuF5fFrnJHfJQR">重试所有未解析</button>
+      <button id="stopParse" class="danger" type="button" hidden data-page-node-id="JtQCeSGszu5HwpwpGfDmk6">停止</button>
+    </div>
+    <div class="group" data-page-node-id="YqFrpqtJFUv1C4c27XK3BB">
+      <span class="group-label" data-page-node-id="9lptCbwyNIhl099In1zVIu">导出</span>
+      <button id="exportSelected" type="button" data-page-node-id="RYC8ohJXdaLZ6pDOlBwXlH">导出选中</button>
+      <button id="exportAll" class="primary" type="button" data-page-node-id="GXY0DHeH28GcPXAhCEEbrm">一次导出全部 xlsx + PDF</button>
+    </div>
+    <div class="group" data-page-node-id="tIvpv0LiELSwfxwE0oC0uA">
+      <span class="group-label" data-page-node-id="mvVI78FwE0ZE6dtS8soxJs">维护</span>
+      <button id="deleteSelected" class="danger" type="button" data-page-node-id="M91G4g9E2cmM642NpYn7wv">删除选中</button>
+      <button id="clearAll" class="danger" type="button" data-page-node-id="wBTlbVkHgNjCHfebWbYKQq">清空采集池</button>
+    </div>
+  </section>
+
+  <div id="status" class="status" role="status" data-page-node-id="AmkeivlqBid8SfcP9r6wBf">就绪</div>
+  <p id="buildTag" class="build-tag" data-page-node-id="Cuh1kzvSkSraUTBCH0ufIN"></p>
+
+  <div id="progressWrap" class="progress-wrap" hidden data-page-node-id="Hroo1rh3T4K6LyURaYmIOr">
+    <div class="progress-track" data-page-node-id="s0IHUZwzuxNHvtdiYpdeP4"><div id="progressBar" class="progress-bar" data-page-node-id="RLBd5HrMle1Z5YBJdcm2zj"></div></div>
+    <span id="progressText" class="progress-text" data-page-node-id="rvFTDusXSXAlaJNsbJJ6Js"></span>
+  </div>
+
+  <main class="table-area" data-page-node-id="cPh9eTE2gg14utY8d79xIC">
+    <table id="poolTable" data-page-node-id="RyVryROmtHehjuFlIyIrRr">
+      <thead data-page-node-id="GUO7CofGeCOpnfCdfDS1hU">
+        <tr data-page-node-id="dDujk3feoVkq5MDGfJAyu2">
+          <th class="col-check" data-page-node-id="k9NGNtB0ydC0QdCDyEJsca"><input id="headCheck" type="checkbox" title="全选/取消" data-page-node-id="pBTL168lJ1W3wEHrDdniT8"></th>
+          <th class="col-idx" data-page-node-id="W1qFaWNrdDWBJHDMxcBxCf">#</th>
+          <th class="col-status" data-page-node-id="34TFBwEaxzBRMA9Z8fB0De">状态</th>
+          <th data-page-node-id="FfPON2u0tHeni6eSGcUvqe">小区名称</th>
+          <th data-page-node-id="ItQnZvb3xSXsZWPkOGsnh7">区划</th>
+          <th data-page-node-id="Gnxt05xJvmFnEBNL6GTA0G">类型</th>
+          <th class="num" data-page-node-id="g5RxTCajVJQ4UK8lcoTIdO">面积</th>
+          <th class="num" data-page-node-id="9UlFchAyTxLTCcSfXhHefC">起拍价万</th>
+          <th class="num" data-page-node-id="hiDvfLtRnEVby4ua62JbdA">折扣</th>
+          <th class="num" data-page-node-id="bvpepi9e4UWEdrS4CPs6l4">单价</th>
+          <th data-page-node-id="Qpb0Q5o7Og7m4Os9tpnvtR">平台</th>
+          <th data-page-node-id="ija1WD3RrZQdZrpWwApwhB">采集时间</th>
+          <th class="col-ops" data-page-node-id="ABFfmRa12GYxNYYTGX1DuP">操作</th>
+        </tr>
+      </thead>
+      <tbody data-page-node-id="3ShYMtGoBvoF02wKCtdFYi"></tbody>
+    </table>
+    <p id="empty" class="empty" hidden data-page-node-id="QaSdu9jqgFpwQ9L2MGRcea">
+      采集池是空的。<br data-page-node-id="23EfrufLFCrHUKBFzhX1FQ">
+      到法拍详情页点扩展图标 →「采集到池」，采一个进一条；<br data-page-node-id="DdAdwb8RcjEIc7zt2fCTrY">
+      列表页也可以用弹窗里的「按最新发布选截止位」一次把连续多条采进来。
+    </p>
+  </main>
+
+  <dialog id="editor" class="editor" data-page-node-id="oAJQwP7clA4PgRxb0vZNG2">
+    <header data-page-node-id="XoDAKczGOFSGOCV84D2DIk">
+      <div data-page-node-id="1AhontIJReu5KNhluU8nKu">
+        <h2 id="editorTitle" data-page-node-id="djruA2txJZuKgn66hP8fWM">编辑记录</h2>
+        <p id="editorUrl" class="editor-url" data-page-node-id="HoVz46QT38xYhZCcpxoLZ6"></p>
+      </div>
+      <button id="editorClose" class="icon" type="button" title="关闭" data-page-node-id="5XbmjI3aXmgo89S4j8is94">关闭</button>
+    </header>
+    <div id="editorFields" class="editor-fields" data-page-node-id="BL07xP3VaBFnpZZM9endLf"></div>
+    <label class="editor-note" data-page-node-id="varn7jAAlcoYuOQnJA22Sr">备注（只存在池里，不进入导出文件）
+      <textarea id="editorNote" rows="2"></textarea>
+    </label>
+    <div id="editorWarnings" class="editor-warnings" hidden data-page-node-id="rRNA6LKxIuXvBaFyb1Yk0U"></div>
+    <footer data-page-node-id="bPJmgBEb5K30v3CEoAXeDv">
+      <button id="editorSave" class="primary" type="button" data-page-node-id="ctz6v2FDgLYZC6ZZpGlp5t">保存修改</button>
+      <button id="editorRevert" type="button" data-page-node-id="kFkmvnadgP86auGQe3EuhP">还原为初始值</button>
+      <span id="editorHint" class="hint" data-page-node-id="mOcM69oA1QaYSNyBTUMjGf"></span>
+    </footer>
+  </dialog>
+
+  <script src="common.js"></script>
+  <script src="report-export.js"></script>
+  <script src="pool.js"></script>
+</body>
+</html>
