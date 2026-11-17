@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 安装与使用问题
+    url: https://github.com/entropyzhl-maker/auction-capture-extension/blob/main/README.md
+    about: 先看 README 的「安装」「快速开始」两节，绝大多数问题在那里有答案。
+  - name: 字段抽取不准
+    url: https://github.com/entropyzhl-maker/auction-capture-extension/blob/main/md/auction-extraction-spec.md
+    about: 抽取口径由这份规范决定，先确认是不是规范本身就没写清。

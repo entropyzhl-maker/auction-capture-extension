@@ -1,0 +1,109 @@
+name: 语法检查
+
+# 纯原生 JS、无构建、无依赖，所以 CI 只做一件最划算的事：
+# 把语法错误挡在合并前。任何 .js 写坏了，这里会红。
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  syntax:
+    name: node --check + JSON 校验
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: 检查所有 JS 文件语法
+        shell: bash
+        run: |
+          set -euo pipefail
+          fail=0
+          shopt -s globstar nullglob
+          for f in **/*.js; do
+            case "$f" in
+              node_modules/*) continue ;;
+            esac
+            if node --check "$f"; then
+              echo "OK   $f"
+            else
+              echo "::error file=$f::语法检查未通过"
+              fail=1
+            fi
+          done
+          exit $fail
+
+      - name: 校验 manifest.json 与各 JSON 文件可解析
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s globstar nullglob
+          for f in **/*.json; do
+            case "$f" in
+              node_modules/*) continue ;;
+            esac
+            node -e "JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'))" "$f"
+            echo "OK   $f"
+          done
+
+      - name: 校验 manifest 关键字段
+        shell: bash
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const m = JSON.parse(require('fs').readFileSync('manifest.json', 'utf8'));
+          const problems = [];
+          if (m.manifest_version !== 3) problems.push('manifest_version 必须是 3');
+          if (!m.version || !/^\d+\.\d+(\.\d+)?$/.test(m.version)) problems.push(`version 不合法: ${m.version}`);
+          if (!m.name) problems.push('缺少 name');
+          if (!m.background || !m.background.service_worker) problems.push('缺少 background.service_worker');
+          if (!m.action || !m.action.default_popup) problems.push('缺少 action.default_popup');
+          if (!Array.isArray(m.permissions) || !m.permissions.length) problems.push('permissions 为空');
+          // 内置密钥是最不想再出一次的事故，这里直接卡死。
+          const blob = JSON.stringify(m);
+          if (/sk-[A-Za-z0-9]{16,}|github_pat_|ghp_/.test(blob)) problems.push('manifest.json 里疑似出现密钥');
+          if (problems.length) {
+            for (const p of problems) console.log(`::error::${p}`);
+            process.exit(1);
+          }
+          console.log(`manifest ok: ${m.name} v${m.version}`);
+          NODE
+
+      - name: 防止把密钥提交进仓库
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          # 有 base 就只扫本次改动；否则（push / 手动触发）扫全部跟踪文件。
+          if [ -n "${BASE_SHA:-}" ] && git rev-parse --verify --quiet "$BASE_SHA" >/dev/null; then
+            git diff --name-only --diff-filter=ACMR "$BASE_SHA" HEAD > /tmp/changed.txt
+          else
+            git ls-files > /tmp/changed.txt
+          fi
+
+          hit=0
+          while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            [ -f "$f" ] || continue
+            if grep -nEI 'sk-[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|ghp_[A-Za-z0-9]{20,}' "$f"; then
+              echo "::error file=$f::疑似提交了 API Key / PAT"
+              hit=1
+            fi
+          done < /tmp/changed.txt
+
+          if [ "$hit" -eq 0 ]; then
+            echo "密钥扫描通过"
+          fi
+          exit $hit
