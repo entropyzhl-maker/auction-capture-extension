@@ -532,6 +532,24 @@ function clampCaptureConcurrency(value) {
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
+// 关标签前等页面彻底加载完（document.readyState === 'complete'）。
+// 串行时标签在前台，浏览器自然把它加载到底再被关掉；并发下标签在后台被节流，
+// waitForAuctionReady 判内容就绪就采了，此时 load 可能还没到 complete 就被关掉。
+// 这里补一段等 complete 的等待，对齐串行「加载完再关」的效果；到点仍未 complete
+// 就放弃等待直接关，绝不因为这一段拖住整批。
+const LOAD_COMPLETE_POLL_MS = 200;   // 探测间隔
+const LOAD_COMPLETE_MAX_MS = 8000;   // 最多等 8s 兜底
+async function waitForTabLoadComplete(tabId, timeoutMs = LOAD_COMPLETE_MAX_MS) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    let tab;
+    try { tab = await chrome.tabs.get(tabId); } catch { return false; }
+    if (tab.status === 'complete') return true;
+    if (Date.now() >= deadline) return false;
+    await sleep(LOAD_COMPLETE_POLL_MS);
+  }
+}
+
 // 价格类字段「标签 + 数字」同现才算真的落地；光有标签是骨架占位（起拍价：--）。
 // 去掉空白后匹配，兼容 innerText 与 visible_text 两种正文口径。
 //   (?:(?!--|暂无|待定)[^0-9]){0,6}  标签到数字之间只允许冒号、¥、空格等少量噪声，
@@ -794,14 +812,11 @@ async function runSortBatch(urls, options, settings) {
     let tabId = null;
     await setCaptureTask({ current: url });
     try {
-      // v0.6.4：详情页改成「可见的活动标签」打开。
-      // 后台隐藏标签撞到 x5secdata 验证墙时，主人看不到也就没法过验证；
-      // 被节流的隐藏标签渲染也更慢，以前那套「等 40s 判未就绪」有相当一部分
-      // 是这么等死的。开在眼前，验证码你自己点掉，采完这段代码会把标签关掉。
-      // 并发 >1 时只有第一条抢焦点，其余开在后面，免得一直跳窗口。
-      const tab = await chrome.tabs.create({ url, active: cap === 1 });
+      // 详情页一律后台打开，不抢焦点：并发时不跳窗口，撞 x5secdata 验证墙
+      // 也不弹前台，停在后台原地等主人自己切过去点掉，跟串行时一样；过了验证
+      // waitForAuctionReady 会重置计时继续采，采完这段 finally 会把标签关掉。
+      const tab = await chrome.tabs.create({ url, active: false });
       tabId = tab.id;
-      try { await chrome.windows.update(tab.windowId, { focused: true }); } catch { /* 无窗口权限时忽略 */ }
       const ready = await waitForAuctionReady(tabId, readyTimeoutMs());
       const { evidence, priceMissing } = await collectEvidenceSettled(tabId, options, { url, strict: ready.strict });
       assertAuctionLanding(evidence, url);
@@ -843,6 +858,10 @@ async function runSortBatch(urls, options, settings) {
         aborted = `连续 ${consecutive} 条失败，已中止整批（最后原因：${error.message}）`;
       }
     } finally {
+      // 关标签前先等页面彻底加载完（对齐串行时前台标签自然加载完再关）。
+      // 后台标签被浏览器节流，采到内容时 load 未必到 complete，直接关会截断页面；
+      // 等满 LOAD_COMPLETE_MAX_MS 仍未 complete 就放弃，绝不拖住整批。
+      if (tabId !== null) await waitForTabLoadComplete(tabId);
       // 无论成败都把标签关掉：并行跑时漏关会迅速堆出几十个标签。
       if (tabId !== null) try { await chrome.tabs.remove(tabId); } catch { /* 已关闭 */ }
     }
