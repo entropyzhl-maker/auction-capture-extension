@@ -1,13 +1,19 @@
 /* report-export.js —— 100% 自包含的 xlsx + PDF 导出引擎
  *
  * 不依赖任何外部库 / Python / 本地路径 / 注册表，全部在浏览器扩展沙箱内完成：
- *   · xlsx：手写 ZIP(store + CRC32) + OOXML（样式 / 超链接 / 列宽 / 合并单元格）
- *   · PDF ：Canvas 画表格（中文走系统字体，绝不乱码）→ JPEG → 手写 PDF 封装
+ *   · xlsx：手写 ZIP(store + CRC32) + OOXML（样式 / 超链接 / 列宽 / 合并单元格 / 完整外框）
+ *   · PDF ：矢量文字表格 —— 真字体子集嵌入（Type0 / Identity-H），
+ *           文字可选中、可检索、任意放大不糊；不再走「Canvas → JPEG」位图路线。
+ *
+ * PDF 依赖同目录三个模块（缺任意一个会自动退回旧的位图方案，不会导不出）：
+ *   pdf-font.js    TrueType 解析 + 子集化 + PDF 字体对象
+ *   pdf-writer.js  极简 PDF 写入器（多页 / 链接 / FlateDecode）
+ *   report-pdf.js  表格排版（列宽求解 / 折行 / 分页 / 绘制指令）
  *
  * 对外暴露 window.ReportExport：
  *   buildReportData(records) -> {rows, groups, dropped}
  *   buildXlsx(rows, title)   -> Uint8Array   (.xlsx 字节)
- *   buildPdf(rows, title)    -> Promise<{bytes:Uint8Array, pages:number}>
+ *   buildPdf(rows, title)    -> Promise<{bytes:Uint8Array, pages:number, mode:'vector'|'bitmap'}>
  */
 (function (global) {
   'use strict';
@@ -79,31 +85,9 @@
     return { rows, groups: groupStat, dropped };
   }
 
-  // 报表标题。本文件是独立 IIFE，设计上不依赖 chrome.storage，品牌名由调用方注入：
-  //   · reportTitle('某某房产')       —— 直接传
-  //   · ReportExport.configure({ brand: '某某房产' }) —— 一次设定
-  //   · 都不传 → 中性标题「法拍房源汇总（M月D日）」
-  // 另外做一次「尽力而为」的兜底：万一跑在扩展页面里（chrome.storage 存在），
-  // 自动读一次 settings.reportBrand；读不到就保持中性标题，不影响任何调用方。
-  let brandName = '';
-  function configure(opts) {
-    if (opts && typeof opts.brand === 'string') brandName = opts.brand.trim();
-  }
-
-  (function autoLoadBrand() {
-    try {
-      if (typeof chrome === 'undefined' || !chrome || !chrome.storage || !chrome.storage.local) return;
-      Promise.resolve(chrome.storage.local.get({ reportBrand: '' }))
-        .then((s) => { if (!brandName && s && typeof s.reportBrand === 'string') brandName = s.reportBrand.trim(); })
-        .catch(() => { /* 读不到就用中性标题 */ });
-    } catch { /* node / 非扩展环境直接跳过 */ }
-  })();
-
-  function reportTitle(brand) {
+  function reportTitle() {
     const d = new Date();
-    const md = `${d.getMonth() + 1}月${d.getDate()}日`;
-    const name = String(brand ?? brandName ?? '').trim();
-    return name ? `${name}（${md}房源汇总）` : `法拍房源汇总（${md}）`;
+    return `陕西源动创科（${d.getMonth() + 1}月${d.getDate()}日房源汇总）`;
   }
 
   // 整个报表的行序列 = 标题行 + 各区(区名 + 表头 + 数据)
@@ -209,6 +193,39 @@
 <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
 <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
 </Relationships>`;
+  // ---- 边框策略 ----
+  //   1) 只有「左上角 cell 的内容」会被合并单元格渲染，但边框是逐格绘制的：
+  //      标题行/区名行如果只写 A 列的 cell，B..P 就是无边框的空格，合并区
+  //      右侧那条竖线根本不存在 —— 这正是「区名行只有上下两条横线、没有
+  //      竖边收口」的根因。所以合并行必须把 B..P 的 cell 也写进 XML 并挂
+  //      同一套边框（openpyxl 的 merged_cells 四边检查也依赖这一点）。
+  //   2) 每格四边统一 thin（等价于 Excel「所有框线」）。相邻两格对同一条线
+  //      各声明一次时，Excel / WPS 都会自己去重，实测渲染仍是 1px；反过来
+  //      刻意「只让一边声明」反而会在合并行边界处留下断口。
+  //   3) 样式复用：全部单元格 borderId=1，不再按行列算变体。
+  const THIN = (tag) => `<${tag} style="thin"><color rgb="FF000000"/></${tag}>`;
+  const BORDERS_XML = `<border><left/><right/><top/><bottom/><diagonal/></border>`
+    + `<border>${THIN('left')}${THIN('right')}${THIN('top')}${THIN('bottom')}<diagonal/></border>`;
+
+  const CENTER = '<alignment horizontal="center" vertical="center"/>';
+  const CENTER_WRAP = '<alignment horizontal="center" vertical="center" wrapText="1"/>';
+  const LEFT_WRAP = '<alignment horizontal="left" vertical="center" wrapText="1"/>';
+  const LEFT = '<alignment horizontal="left" vertical="center"/>';
+  // 行角色：字体 / 底纹 / 对齐。索引即 s 值（0 号留给 Normal）。
+  const ROLES = [
+    { font: 1, fill: 0, align: CENTER },      // 1 title  14pt 红             ← 原来 borderId=0，表格顶部没横线
+    { font: 2, fill: 2, align: CENTER },      // 2 dist   浅蓝底 DDEBF7
+    { font: 3, fill: 3, align: CENTER_WRAP }, // 3 head   深蓝底 1F4E79
+    { font: 0, fill: 0, align: CENTER },      // 4 data 居中
+    { font: 0, fill: 0, align: LEFT_WRAP },   // 5 data 左对齐(地址/楼层)
+    { font: 4, fill: 0, align: LEFT },        // 6 超链接
+  ];
+  const ROLE = { title: 1, dist: 2, head: 3, dataC: 4, dataL: 5, link: 6 };
+  const CELL_XFS = ROLES.map(d =>
+    `<xf numFmtId="0" fontId="${d.font}" fillId="${d.fill}" borderId="1" xfId="0" applyFont="1"`
+    + ` applyFill="${d.fill ? 1 : 0}" applyBorder="1" applyAlignment="1">${d.align}</xf>`
+  ).join('');
+
   const STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
 <fonts count="5">
@@ -224,71 +241,74 @@
 <fill><patternFill patternType="solid"><fgColor rgb="FFDDEBF7"/><bgColor indexed="64"/></patternFill></fill>
 <fill><patternFill patternType="solid"><fgColor rgb="FF1F4E79"/><bgColor indexed="64"/></patternFill></fill>
 </fills>
-<borders count="2">
-<border><left/><right/><top/><bottom/><diagonal/></border>
-<border><left style="thin"><color rgb="FF000000"/></left><right style="thin"><color rgb="FF000000"/></right><top style="thin"><color rgb="FF000000"/></top><bottom style="thin"><color rgb="FF000000"/></bottom><diagonal/></border>
-</borders>
+<borders count="2">${BORDERS_XML}</borders>
 <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-<cellXfs count="7">
-<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
-<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
-<xf numFmtId="0" fontId="2" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
-<xf numFmtId="0" fontId="3" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
-<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
-<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center" wrapText="1"/></xf>
-<xf numFmtId="0" fontId="4" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center"/></xf>
-</cellXfs>
+<cellXfs count="${1 + ROLES.length}"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>${CELL_XFS}</cellXfs>
 <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
 </styleSheet>`;
 
   function buildSheet(rows, title) {
     const nc = HEADERS.length;
-    let r = 1;
-    const rowXml = [];
+    const all = withTitle(rows, title);
+    const lastRowIdx = all.length;          // 「数据行」总行数（含标题行）
     const merges = [];
     const hyperlinks = [];
     const sheetRels = [];
     let relId = 1;
 
-    // 标题行
-    merges.push(`A${r}:${colLetter(nc)}${r}`);
-    rowXml.push(`<row r="${r}" ht="22" customHeight="1"><c r="A${r}" s="1" t="inlineStr"><is><t>${esc(title)}</t></is></c></row>`);
-    r++;
+    // 边框：所有 cell 统一「四边 thin」。相邻格对同一条线各声明一次，由
+    // Excel / WPS 自行去重（实测渲染仍是 1px，不会叠成 2px）。
+    // s 值就是 ROLES 下标 + 1（0 号是 Normal）。
+    const cell = (style, colIdx, rowIdx, value) => {
+      const ref = `${colLetter(colIdx + 1)}${rowIdx}`;
+      return `<c r="${ref}" s="${style}" t="inlineStr"><is><t>${esc(value)}</t></is></c>`;
+    };
 
-    for (const row of rows) {
-      if (row.kind === 'dist') {
+    const rowXml = [];
+    all.forEach((row, i) => {
+      const r = i + 1;
+      if (row.kind === 'title') {
+        // 合并 A:P —— 但 B..P 的 cell 必须存在，否则合并区右侧竖边无从渲染。
         merges.push(`A${r}:${colLetter(nc)}${r}`);
-        rowXml.push(`<row r="${r}" ht="17" customHeight="1"><c r="A${r}" s="2" t="inlineStr"><is><t>${esc(row.text)}</t></is></c></row>`);
+        const cells = [];
+        for (let c = 0; c < nc; c++) cells.push(cell(ROLE.title, c, r, c === 0 ? (row.text || title) : ''));
+        rowXml.push(`<row r="${r}" ht="30" customHeight="1">${cells.join('')}</row>`);
+      } else if (row.kind === 'dist') {
+        merges.push(`A${r}:${colLetter(nc)}${r}`);
+        const cells = [];
+        for (let c = 0; c < nc; c++) cells.push(cell(ROLE.dist, c, r, c === 0 ? row.text : ''));
+        rowXml.push(`<row r="${r}" ht="22" customHeight="1">${cells.join('')}</row>`);
       } else if (row.kind === 'head') {
-        const cells = row.cells.map((v, i) => `<c r="${colLetter(i + 1)}${r}" s="3" t="inlineStr"><is><t>${esc(v)}</t></is></c>`).join('');
-        rowXml.push(`<row r="${r}" ht="26" customHeight="1">${cells}</row>`);
+        // 表头放宽到 32：'市场价/万元' 折两行时 26 会被裁。
+        const cells = row.cells.map((v, c) => cell(ROLE.head, c, r, v));
+        rowXml.push(`<row r="${r}" ht="32" customHeight="1">${cells.join('')}</row>`);
       } else {
         const cells = [];
-        for (let i = 0; i < row.cells.length; i++) {
-          const v = row.cells[i];
-          const ref = `${colLetter(i + 1)}${r}`;
-          if (i === 0 && row.link) {
-            cells.push(`<c r="${ref}" s="6" t="inlineStr"><is><t>${esc(v)}</t></is></c>`);
+        for (let c = 0; c < row.cells.length; c++) {
+          const v = row.cells[c];
+          const ref = `${colLetter(c + 1)}${r}`;
+          const s = (c === 0 && row.link) ? ROLE.link : ((c === 6 || c === 7) ? ROLE.dataL : ROLE.dataC);
+          if (c === 0 && row.link) {
+            cells.push(`<c r="${ref}" s="${s}" t="inlineStr"><is><t>${esc(v)}</t></is></c>`);
             const rid = `rId${relId++}`;
             hyperlinks.push(`<hyperlink ref="${ref}" r:id="${rid}"/>`);
             sheetRels.push(`<Relationship Id="${rid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="${esc(row.link)}" TargetMode="External"/>`);
           } else if (typeof v === 'number' || (v !== '' && !isNaN(Number(v)) && !/^[%/]/.test(String(v)))) {
-            cells.push(`<c r="${ref}" s="${(i === 6 || i === 7) ? 5 : 4}"><v>${Number(v)}</v></c>`);
+            cells.push(`<c r="${ref}" s="${s}"><v>${Number(v)}</v></c>`);
           } else {
-            cells.push(`<c r="${ref}" s="${(i === 6 || i === 7) ? 5 : 4}" t="inlineStr"><is><t>${esc(v)}</t></is></c>`);
+            cells.push(`<c r="${ref}" s="${s}" t="inlineStr"><is><t>${esc(v)}</t></is></c>`);
           }
         }
         rowXml.push(`<row r="${r}">${cells.join('')}</row>`);
       }
-      r++;
-    }
+    });
 
     const cols = WIDTHS.map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join('');
     const mergeXml = merges.length ? `<mergeCells count="${merges.length}">${merges.map(m => `<mergeCell ref="${m}"/>`).join('')}</mergeCells>` : '';
     const hyperXml = hyperlinks.length ? `<hyperlinks>${hyperlinks.join('')}</hyperlinks>` : '';
     const sheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
-<dimension ref="A1:${colLetter(nc)}${r - 1}"/>
+<dimension ref="A1:${colLetter(nc)}${lastRowIdx}"/>
 <sheetViews><sheetView workbookViewId="0"/></sheetViews>
 <sheetFormatPr defaultRowHeight="15"/>
 <cols>${cols}</cols>
@@ -480,17 +500,42 @@ ${hyperXml}
     return concat(chunks);
   }
 
+  // 矢量链路失败的原因（供 UI / 日志显示）。必须在 buildPdf 之前声明：
+  // 之前写在 buildPdf 后面，赋值时命中 TDZ 会直接抛 ReferenceError。
+  let lastPdfError = null;
+
   async function buildPdf(rows, title) {
     const t = title || reportTitle();
-    // 标题行由这里补上：调用方传的是纯业务行（区名/表头/数据），
-    // 之前 PDF 直接拿这份行画，导致整张表没有标题。
+    lastPdfError = null;
+
+    // 首选：矢量文字 PDF（pdf-font.js + pdf-writer.js + report-pdf.js）
+    //   文字是真字体嵌入（Type0/Identity-H 子集），放大/打印都是清晰矢量，
+    //   可选中、可全文检索，体积比旧版 JPEG 方案还小一个数量级。
+    const RP = global.ReportPdf;
+    if (RP && global.PdfFont && global.PdfWriter) {
+      try {
+        const out = await RP.build(rows, t);
+        if (out && out.bytes && out.bytes.length > 1000) {
+          return { bytes: out.bytes, pages: out.pages, mode: 'vector' };
+        }
+      } catch (err) {
+        // 矢量链路失败就退回 canvas 位图，绝不因为字体问题让用户导不出文件
+        console.warn('[report-export] 矢量 PDF 失败，回退位图模式：', err);
+        lastPdfError = err && err.message ? err.message : String(err);
+      }
+    }
+
+    // 兜底：Canvas 画表格 → JPEG → PDF（老路径，字会糊但一定出得来）
     const pages = paginate(withTitle(rows, t));
     const rendered = [];
     for (let i = 0; i < pages.length; i++) {
       rendered.push(drawPage(pages[i], i, pages.length, t));
     }
-    return { bytes: assemblePdf(rendered), pages: rendered.length };
+    return { bytes: assemblePdf(rendered), pages: rendered.length, mode: 'bitmap', fallbackReason: lastPdfError };
   }
 
-  global.ReportExport = { buildReportData, buildXlsx, buildPdf, reportTitle, configure, HEADERS, WIDTHS };
+  global.ReportExport = {
+    buildReportData, buildXlsx, buildPdf, reportTitle, HEADERS, WIDTHS,
+    get lastPdfError() { return lastPdfError; },
+  };
 })(typeof window !== 'undefined' ? window : globalThis);

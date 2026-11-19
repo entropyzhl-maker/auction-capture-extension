@@ -283,6 +283,52 @@ async function clearWatermark() {
 }
 
 // ------------------------------------------------------------
+// 水位导入 / 导出
+// 换扩展 ID（改了「已解压扩展」的目录路径就会换 ID）之后，旧 storage 读不到，
+// 界面会显示「水位：未记录」。这里给一条手动的出口：先把旧的导出来，再导回去。
+// ------------------------------------------------------------
+async function exportWatermarks() {
+  try {
+    const wm = await watermarkExportPayload();
+    const lanes = Object.keys(wm.lanes || {});
+    const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    await downloadFile(
+      `法拍水位_${stamp}.json`,
+      JSON.stringify(wm, null, 2),
+      'application/json;charset=utf-8',
+    );
+    await logEvent('info', '导出水位', `${lanes.length} 个通道`, { 通道: lanes.join(',') });
+    setStatus(lanes.length
+      ? `已导出 ${lanes.length} 个通道的水位（${lanes.join(' / ')}）。换扩展 ID 后可用「导入水位」恢复。`
+      : '当前没有任何水位记录，导出的是一份空文件。', lanes.length ? 'success' : 'error');
+  } catch (error) {
+    setStatus(`导出水位失败：${describeMessageError(error)}`, 'error');
+  }
+}
+
+async function importWatermarksFromFile(file) {
+  if (!file) return;
+  try {
+    const text = await file.text();
+    const result = await watermarkImport(text, { merge: true });
+    if (!result.ok) {
+      setStatus(`导入失败：${result.error}`, 'error');
+      return;
+    }
+    watermark = await watermarkLoad();
+    const lane = currentLane();
+    wsPlan = lane && sortItems.length ? watermarkPlan(sortItems, lane, watermark, 20) : null;
+    await logEvent('info', '导入水位', `${result.lanes.length} 个通道（${result.mode}）`, {
+      通道: result.lanes.join(','), 来源: file.name,
+    });
+    setStatus(`已导入 ${result.lanes.length} 个通道的水位（${result.lanes.join(' / ')}）。`, 'success');
+    refreshSortCard();
+  } catch (error) {
+    setStatus(`导入水位失败：${describeMessageError(error)}`, 'error');
+  }
+}
+
+// ------------------------------------------------------------
 // 采集池渲染
 // ------------------------------------------------------------
 function entryLabel(item) {
@@ -477,15 +523,6 @@ async function parsePool() {
     setStatus('插件内置的模型地址为空，请重新加载扩展（edge://extensions）后再试。', 'error');
     return;
   }
-  // 开源版不内置密钥：没配就先把用户引到配置区，而不是让他等一串 401
-  if (!String(settings.apiToken || '').trim()) {
-    setStatus('还没填 DeepSeek API Key。先在上方「DeepSeek 密钥」里填入并保存，再点解析。', 'error');
-    try {
-      $('settingsCard').scrollIntoView({ block: 'center', behavior: 'smooth' });
-      $('cfgToken').focus();
-    } catch { /* 老浏览器忽略 */ }
-    return;
-  }
   const granted = await chrome.permissions.request({ origins: [endpointOriginPattern(normalizeEndpoint(settings.apiEndpoint))] });
   if (!granted) {
     setStatus('未授予模型 API 的访问权限，已取消。', 'error');
@@ -503,7 +540,6 @@ async function parsePool() {
     const reason = response?.reason;
     if (reason === 'nothing-to-parse') setStatus('池里没有待解析的条目。', 'error');
     else if (reason === 'no-endpoint') setStatus('还没配置模型 API。', 'error');
-    else if (reason === 'no-token') setStatus('还没填 DeepSeek API Key，先在上方「DeepSeek 密钥」里填入并保存。', 'error');
     else if (reason === 'already-running') setStatus('已有一个解析任务在跑。', 'error');
     else if (reason === 'capture-running') setStatus('正在批量采集页面，等它跑完再解析。', 'error');
     else if (reason === 'stale-worker') { setStatus(`启动失败：${response?.error || ''}`, 'error'); await checkBackground(); }
@@ -549,9 +585,10 @@ async function exportPool() {
     await downloadBytes(`法拍汇总-排版-${stamp}.pdf`, pdf.bytes, 'application/pdf');
 
     const kept = Object.values(data.groups).reduce((a, b) => a + b, 0);
-    await logEvent('info', '导出排版 xlsx+PDF', `${kept} 行 / ${pdf.pages} 页，丢弃空名 ${data.dropped}`,
-      { 分组: data.groups, 丢弃: data.dropped, 页数: pdf.pages });
-    setStatus(`已导出两份：①16 列排版 xlsx；②排版 PDF（${pdf.pages} 页，小区名可点）。共 ${kept} 行，丢弃空小区名 ${data.dropped} 行。`, 'success');
+    const pdfKind = pdf.mode === 'vector' ? '矢量' : '位图回退';
+    await logEvent('info', '导出排版 xlsx+PDF', `${kept} 行 / ${pdf.pages} 页（${pdfKind}），丢弃空名 ${data.dropped}`,
+      { 分组: data.groups, 丢弃: data.dropped, 页数: pdf.pages, pdf模式: pdf.mode || '', 回退原因: pdf.fallbackReason || '' });
+    setStatus(`已导出两份：①16 列排版 xlsx；②排版 PDF（${pdf.pages} 页，${pdfKind}，小区名可点）。共 ${kept} 行，丢弃空小区名 ${data.dropped} 行。`, 'success');
   } catch (error) {
     await logEvent('error', '排版导出失败', error.message || String(error));
     setStatus(`排版 xlsx/PDF 生成失败：${describeMessageError(error)}`, 'error');
@@ -649,8 +686,6 @@ async function init() {
   await refreshParseTask();
   await refreshCaptureTask();
   await checkBackground();
-  // 配置区先刷出来：它不依赖当前标签是不是法拍页，任何时候都该能填密钥
-  await refreshSettingsUI().catch(() => {});
   try { watermark = await watermarkLoad(); } catch { watermark = { version: 1, lanes: {} }; }
   refreshSortCard();
 
@@ -677,15 +712,19 @@ async function init() {
 
 $('captureButton').addEventListener('click', captureToPool);
 $('cutoffButton').addEventListener('click', focusCutoffCapture);
-$('cfgSave').addEventListener('click', saveSettingsFromUI);
-$('cfgTest').addEventListener('click', testConnection);
-$('cfgClear').addEventListener('click', clearApiKey);
 $('readSortButton').addEventListener('click', readSortList);
 $('sortCutoff').addEventListener('change', refreshSortCard);
 $('latestSortConfirmed').addEventListener('change', refreshSortCard);
 $('sortRunButton').addEventListener('click', runSortBatch);
 $('wsRunButton').addEventListener('click', runWatermarkBatch);
 $('wsClearButton').addEventListener('click', clearWatermark);
+$('wsExportButton').addEventListener('click', exportWatermarks);
+$('wsImportButton').addEventListener('click', () => $('wsImportFile').click());
+$('wsImportFile').addEventListener('change', async (event) => {
+  const file = event.target.files?.[0];
+  event.target.value = '';       // 允许连续导入同一个文件
+  await importWatermarksFromFile(file);
+});
 $('laneType').addEventListener('change', () => {
   // 切通道后重算计划
   if (sortItems.length) {
@@ -702,118 +741,12 @@ $('manageButton').addEventListener('click', () => chrome.tabs.create({ url: chro
 $('editClose').addEventListener('click', closeEditor);
 $('editSave').addEventListener('click', saveEditor);
 
-// ------------------------------------------------------------
-// DeepSeek 密钥配置
-// 模型已锁定为 DeepSeek V4.1 Flash（API id = deepseek-flash），界面只让用户填密钥，
-// 地址与模型名固定，不开放修改，避免填错导致 400 / 解析全失败。
-// ------------------------------------------------------------
-const FIXED_MODEL = 'deepseek-flash';                                  // API id
-const FIXED_MODEL_LABEL = 'DeepSeek V4.1 Flash';
-const FIXED_ENDPOINT = 'https://api.deepseek.com/v1/chat/completions'; // 官方 Chat Completions
-
-function cfgMsg(text, ok = null) {
-  const el = $('cfgMsg');
-  el.hidden = !text;
-  el.textContent = text || '';
-  el.className = `hint${ok === true ? ' ok' : ok === false ? ' bad' : ''}`;
-}
-
-// 回填状态并更新右上角徽标。出于安全，密码框永远不回填真实 key。
-async function refreshSettingsUI() {
-  const s = await loadModelSettings().catch(() => ({}));
-  const hasToken = Boolean(String(s.apiToken || '').trim());
-  $('cfgToken').value = '';
-  $('cfgToken').placeholder = hasToken ? '已配置（留空则不修改）' : 'sk-...';
-  const badge = $('keyStatus');
-  badge.textContent = hasToken ? '已配置' : '未配置';
-  badge.classList.toggle('badge-accent', hasToken);
-  badge.classList.toggle('badge-warn', !hasToken);
-  return s;
-}
-
-async function saveSettingsFromUI() {
-  const typed = $('cfgToken').value.trim();
-  if (!typed) { cfgMsg('请先填入 API Key。', false); return; }
-
-  $('cfgSave').disabled = true;
-  try {
-    // 顺便把地址/模型钉回固定值，防止旧配置残留成别的通道
-    const res = await saveModelSettings({
-      apiToken: typed,
-      apiEndpoint: FIXED_ENDPOINT,
-      modelName: FIXED_MODEL,
-    });
-    if (!res?.ok) { cfgMsg('保存失败，请重试。', false); return; }
-    await refreshSettingsUI();
-    cfgMsg(`已保存，解析将使用 ${FIXED_MODEL_LABEL}。`, true);
-    setStatus(`密钥已保存，现在可以点「解析字段」（${FIXED_MODEL_LABEL}）。`, 'success');
-  } catch (error) {
-    cfgMsg(`保存失败：${describeMessageError(error)}`, false);
-  } finally {
-    $('cfgSave').disabled = false;
-  }
-}
-
-// 测试：用固定地址/模型 + 界面上的 key 发一个最小请求
-async function testConnection() {
-  const s = await loadModelSettings().catch(() => ({}));
-  const typed = $('cfgToken').value.trim();
-  const token = typed || String(s.apiToken || '').trim();
-  if (!token) { cfgMsg('还没有 API Key，先填入并保存。', false); return; }
-
-  $('cfgTest').disabled = true;
-  cfgMsg(`正在测试 ${FIXED_MODEL_LABEL} 连接…`);
-  try {
-    const granted = await chrome.permissions.request({
-      origins: [endpointOriginPattern(normalizeEndpoint(FIXED_ENDPOINT))],
-    });
-    if (!granted) { cfgMsg('未授予 api.deepseek.com 的访问权限，已取消。', false); return; }
-
-    const res = await fetch(normalizeEndpoint(FIXED_ENDPOINT), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({
-        model: FIXED_MODEL,
-        messages: [{ role: 'user', content: 'ping' }],
-        max_tokens: 8,
-        temperature: 0,
-      }),
-    });
-    const text = await res.text();
-    if (!res.ok) { cfgMsg(`连接失败 HTTP ${res.status}：${text.slice(0, 200)}`, false); return; }
-    cfgMsg(`连接正常，${FIXED_MODEL_LABEL} 可访问。`, true);
-  } catch (error) {
-    cfgMsg(`连接失败：${describeMessageError(error)}`, false);
-  } finally {
-    $('cfgTest').disabled = false;
-  }
-}
-
-async function clearApiKey() {
-  try {
-    await chrome.storage.local.set({ apiToken: '' });
-    await refreshSettingsUI();
-    await logEvent('info', '清除 API Key');
-    cfgMsg('已清除本机保存的 API Key。', true);
-  } catch (error) {
-    cfgMsg(`清除失败：${describeMessageError(error)}`, false);
-  }
-}
-
 // 池与解析进度变化时实时刷新（后台在解析时这里会跟着跳）
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local') return;
   if (changes[POOL_STORAGE_KEY]) {
     pool = changes[POOL_STORAGE_KEY].newValue || poolEmpty();
     renderPool();
-  }
-  if (changes.apiToken) {
-    // 在别处改了 key（管理页/控制台）时同步徽标
-    const has = Boolean(String(changes.apiToken.newValue || '').trim());
-    const badge = $('keyStatus');
-    badge.textContent = has ? '已配置' : '未配置';
-    badge.classList.toggle('badge-accent', has);
-    badge.classList.toggle('badge-warn', !has);
   }
   if (changes.parseTask) {
     const wasActive = !!parseTask?.active;

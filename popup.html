@@ -45,26 +45,6 @@
       </div>
     </section>
 
-    <!-- 模型配置：只填密钥。模型已锁定为 DeepSeek V4.1 Flash，不开放改 -->
-    <section id="settingsCard" class="card settings-card">
-      <div class="result-head">
-        <h3>DeepSeek 密钥</h3>
-        <span id="keyStatus" class="badge">未配置</span>
-      </div>
-      <div class="settings-body">
-        <label class="field">
-          <span>API Key</span>
-          <input id="cfgToken" type="password" spellcheck="false" autocomplete="off" placeholder="sk-...">
-        </label>
-      </div>
-      <div class="settings-actions">
-        <button id="cfgSave" class="primary" type="button">保存</button>
-        <button id="cfgTest" type="button">测试</button>
-        <button id="cfgClear" class="link-button" type="button">清除</button>
-      </div>
-      <p id="cfgMsg" class="hint" hidden></p>
-    </section>
-
     <div id="status" class="status" role="status">准备就绪</div>
     <p id="buildTag" class="build-tag"></p>
 
@@ -98,6 +78,11 @@
       <button id="sortRunButton" class="primary" type="button" hidden>采集截止项及之前（仅入池）</button>
       <button id="wsRunButton" class="primary" type="button" hidden>按水位增量采集（仅入池）</button>
       <button id="wsClearButton" type="button" hidden>清空本通道水位</button>
+      <div class="watermark-tools">
+        <button id="wsExportButton" class="link-button" type="button" title="把四路水位导出成 JSON 文件，换扩展 ID / 换电脑后可以导入回来">导出全部水位</button>
+        <button id="wsImportButton" class="link-button" type="button" title="从 JSON 文件恢复水位（可导入整份 storage 备份）">导入水位</button>
+        <input id="wsImportFile" type="file" accept=".json,application/json" hidden>
+      </div>
     </section>
   </main>
 
@@ -118,7 +103,12 @@
   </section>
 
   <script src="common.js"></script>
+  <script src="pdf-font.js"></script>
+  <script src="pdf-writer.js"></script>
+  <script src="report-pdf.js"></script>
   <script src="report-export.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>
+
+

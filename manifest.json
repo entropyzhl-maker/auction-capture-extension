@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "法拍页面采集器",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "description": "法拍页面多次采集进采集池，四路水位增量记忆、AI 批量解析、一次导出 16 列排版 xlsx + PDF。",
   "permissions": [
     "activeTab",

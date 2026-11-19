@@ -149,6 +149,10 @@ h2 {
 }
 .link-button:hover { color: var(--text); text-decoration: underline; }
 
+/* 水位导入/导出：两个并排的小文字按钮 */
+.watermark-tools { display: flex; gap: 12px; margin-top: 2px; }
+.watermark-tools .link-button { min-height: 20px; font-size: 10px; }
+
 /* ---------------- 进度 ---------------- */
 .parse-progress { margin-top: 10px; }
 .progress-track { height: 6px; border-radius: 999px; background: var(--surface-3); overflow: hidden; }
@@ -260,20 +264,6 @@ body.editing .edit-panel { display: flex; }
 }
 .edit-actions { display: flex; align-items: center; gap: 10px; padding-top: 10px; }
 .edit-actions button { min-width: 132px; }
-
-/* ---------------- 模型配置 ---------------- */
-.settings-card { margin-top: 8px; }
-.settings-card h3 { margin: 0 0 4px; font-size: 13px; }
-.settings-body { display: grid; grid-template-columns: 1fr; gap: 7px; margin-top: 9px; }
-.settings-body .field span { width: 64px; }
-.settings-body .field input { flex: 1; min-width: 0; }
-.settings-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
-.settings-actions button.primary { min-width: 96px; }
-.settings-actions .link-button { flex: none; padding: 6px 2px; }
-#cfgMsg { white-space: pre-wrap; word-break: break-all; }
-#cfgMsg.ok { color: var(--text); }
-#cfgMsg.bad { color: #ffffff; font-weight: 600; }
-.badge-warn { border-color: var(--text-mute); color: var(--text); }
 
 /* ---------------- 握手失败提示 ---------------- */
 .diag {

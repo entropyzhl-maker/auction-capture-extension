@@ -265,9 +265,10 @@ async function exportCsv(ids, label) {
     const pdf = await ReportExport.buildPdf(data.rows, title);
     await downloadBytes(`法拍汇总-排版-${stamp}.pdf`, pdf.bytes, 'application/pdf');
     const kept = Object.values(data.groups).reduce((a, b) => a + b, 0);
-    await logEvent('info', '导出排版 xlsx+PDF', `${kept} 行 / ${pdf.pages} 页（${label}），丢弃空名 ${data.dropped}`,
-      { 分组: data.groups, 丢弃: data.dropped, 页数: pdf.pages, 范围: label });
-    setStatus(`${label}：已导出 xlsx + PDF（${pdf.pages} 页）。共 ${kept} 行，丢弃空小区名 ${data.dropped} 行。`, 'success');
+    const pdfKind = pdf.mode === 'vector' ? '矢量' : '位图回退';
+    await logEvent('info', '导出排版 xlsx+PDF', `${kept} 行 / ${pdf.pages} 页（${label}，${pdfKind}），丢弃空名 ${data.dropped}`,
+      { 分组: data.groups, 丢弃: data.dropped, 页数: pdf.pages, 范围: label, pdf模式: pdf.mode || '', 回退原因: pdf.fallbackReason || '' });
+    setStatus(`${label}：已导出 xlsx + PDF（${pdf.pages} 页，${pdfKind}）。共 ${kept} 行，丢弃空小区名 ${data.dropped} 行。`, 'success');
   } catch (error) {
     await logEvent('error', '排版导出失败', error.message || String(error));
     setStatus(`排版导出失败：${describeMessageError(error)}`, 'error');

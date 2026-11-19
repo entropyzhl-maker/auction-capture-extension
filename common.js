@@ -6,8 +6,8 @@
 
 // ------------------------------------------------------------
 // 1. 接口地址归一化
-// 各家控制台给的通常是 baseUrl，形如 https://api.example.com/v1；
-// 但 Chat Completions 要的是完整 endpoint。
+// 各家控制台（以及本机 ~/.workbuddy/models.json）给的通常是 baseUrl，形如
+// https://apihub.agnes-ai.com/v1；但 Chat Completions 要的是完整 endpoint。
 // 直接 POST 到 /v1 网关会回 "Invalid URL (POST /v1)"，所以这里自动补齐路径。
 // ------------------------------------------------------------
 function normalizeEndpoint(raw) {
@@ -44,7 +44,7 @@ function endpointOriginPattern(endpoint) {
 //   ② 界面打开时先跟后台握一次手，发现后台是旧脚本就直接说清原因和修法，
 //      而不是把英文堆栈甩给用户。
 // ------------------------------------------------------------
-const BUILD_STAMP = '2026-11-11.1';
+const BUILD_STAMP = '2026-11-17.2';
 
 // 后台必须全部认识的指令。握手时逐个核对，缺一个就说明后台是旧脚本。
 // v0.6.2 新增 CAPTURE_ONE：单页「采集到池」也走后台统一的就绪判据，
@@ -89,7 +89,7 @@ function describeMessageError(error) {
 }
 
 // ------------------------------------------------------------
-// 2. 字段契约：键名与「法拍信息9.23.xlsm → 总表」A~T 列一一对应
+// 2. 字段契约：键名与「源动创科法拍信息9.23.xlsm → 总表」A~T 列一一对应
 //
 //    总表实测（2026-09-24 用 openpyxl 逐列核对）：
 //      · 表头在第 4 行，数据 5~786 行；
@@ -833,8 +833,7 @@ function buildCsv(records, { header = true } = {}) {
 //   · 公式列本地算出（捡漏=市场−起拍、折扣=起拍/市场、单价=起拍×10000/面积）
 //   · 小区名做 =HYPERLINK(链接, 名称)（Excel/LibreOffice 打开即可点）
 //   · 按区划分组，每组一张表头；小区名为空的行丢弃（不猜）
-//   · 标题行「<品牌>（M月D日房源汇总）」，品牌取设置项 reportBrand；
-//     没配（默认空）时用中性标题「法拍房源汇总（M月D日）」
+//   · 标题行「陕西源动创科（M月D日房源汇总）」
 // ------------------------------------------------------------
 const REPORT_HEADERS = ['小区名称', '面积', '市场价/万元', '起拍价/万元', '捡漏金额/万元',
   '折扣/（%）', '小区地址', '单元/楼层', '室内结构', '装修/情况',
@@ -854,17 +853,7 @@ function _reportDate(v) {
   return m ? `${+m[1]}/${+m[2]}/${+m[3]}` : s;
 }
 
-// 报表标题：品牌名可配（settings.reportBrand），留空走中性标题。
-// 不传 settings 时用 DEFAULT_SETTINGS.reportBrand（默认空）。
-function reportTitle(brand) {
-  const d = new Date();
-  const md = `${d.getMonth() + 1}月${d.getDate()}日`;
-  const name = String(brand ?? '').trim();
-  return name ? `${name}（${md}房源汇总）` : `法拍房源汇总（${md}）`;
-}
-
-function buildReportCsv(records, settings) {
-  const brand = settings?.reportBrand ?? DEFAULT_SETTINGS.reportBrand;
+function buildReportCsv(records) {
   // 1) 清洗 + 计算，丢弃空小区名
   const rows = [];
   let dropped = 0;
@@ -901,8 +890,9 @@ function buildReportCsv(records, settings) {
   }
 
   // 3) 拼 CSV：标题 → 每组(区名 + 表头 + 数据)
+  const now = new Date();
   const out = [];
-  out.push([reportTitle(brand)]);
+  out.push([`陕西源动创科（${now.getMonth() + 1}月${now.getDate()}日房源汇总）`]);
   for (const [dist, sub] of groups) {
     out.push([dist]);
     out.push([...REPORT_HEADERS]);
@@ -940,47 +930,57 @@ async function downloadBytes(filename, bytes, mime) {
 // ------------------------------------------------------------
 // 6. 模型调用
 // ------------------------------------------------------------
-// 模型网关偶发超时/连接重置，没有超时保护时界面会一直转圈，
-// 所以这里统一加超时 + 重试。地址归一化见本节 normalizeEndpoint()。
+// 模型网关偶发超时/连接重置（实测 Agnes 出现过 getaddrinfo ENOTFOUND），
+// 没有超时保护时界面会一直转圈，所以这里统一加超时 + 重试。
+// 地址归一化见本节 normalizeEndpoint()。
 const MODEL_TIMEOUT_MS = 150000;
 const MODEL_ATTEMPTS = 3;
-// 采集池批量解析的并发数。10 是速度与稳定性的折中（短请求实测稳定）。
+// 采集池批量解析的并发数。shuaiapi 实测验过 10 并发 9/10 成功、
+// 20 并发 20/20 成功（短请求），10 是速度与稳定性的折中。
 const DEFAULT_PARSE_CONCURRENCY = 10;
 const MAX_PARSE_CONCURRENCY = 10;
-// 批量采集的并发度。
+// v0.6.0：批量采集的并发度。
 // 上限按「探针开销」定的：探针每次遍历整页 innerText + querySelectorAll，
 // 实测 2.4 万节点 / 11 万字的详情页单次中位 5ms、P95 6ms、偶发 90ms（强制 layout）。
 // 轮询 350ms → 单 worker 约占渲染进程 2%，N 个约 2%N。
-// 真正卡住并发的是风控（同 IP 同浏览器并发拉详情页最像机器人）而不是 CPU。
-// 默认 1（串行）：并发开高很容易让平台把详情页判成风控页，稳的做法是一条一条来；
+// 真正卡住并发的是风控（同 IP 同浏览器并发拉详情页最像机器人）而不是 CPU，
+// 所以默认 6、上限 10，再往上收益递减而风险线性上升。
+// v0.6.4：默认并发从 6 降到 1（串行）。
+// 2026-11-11 实测：并发 6 一起开 10 个详情页，淘宝直接把后 5 个全判成
+// 登录/风控页（`bxpunish: 1` + x5secdata），入池 5 条、失败 5 条、连续 4 条就熔断。
+// 司法拍卖详情页对同 IP 并发极敏感，稳的做法是一条一条来；
 // 想看速度在 storage.local 里把 captureConcurrency 调大（仍受 MAX 上限约束）。
-const DEFAULT_CAPTURE_CONCURRENCY = 1;
+//
+// v0.9.2：默认打开并发 1 → 3。串行太慢（40 条要 4 分钟起），6 又实测被风控，
+// 3 是「快一截但还没踩到 x5secdata 验证墙」的折中。仍保留自适应降级：
+// 连续 3 条失败就砍半回 1，风控真上来会自己退回去。
+const DEFAULT_CAPTURE_CONCURRENCY = 3;
+// 一次性种子：老 storage 里可能还钉着旧默认值 1，靠它把值抬到 3（见下方迁移）。
+const CAPTURE_CONCURRENCY_SEED = 3;
 const MAX_CAPTURE_CONCURRENCY = 10;
 const MIN_CAPTURE_CONCURRENCY = 1;
-// 限流退避：低配额通道在大并发下会回 HTTP 429 或连接数超限。
-// 这类是额度问题、不是坏数据，退避几秒就能过。
+// 限流退避：免费档 / 低配额通道（实测 agnes 免费档）在大并发下会回 HTTP 429
+// 或 `max connections reached: 666`。这类是额度问题、不是坏数据，退避几秒就能过；
+// 旧版只对 502/503/504/524 重试，429 直接判 error，于是每轮都要人工点「重试未解析」。
 const RATE_LIMIT_BACKOFF_MS = [3000, 6000, 12000];
-// 连续几条被限流就把并发压到 MIN_PARSE_CONCURRENCY。
+// 连续几条被限流就把并发压到 MIN_PARSE_CONCURRENCY（9 并发 4 条失败、1 并发全过的实测结论）。
 const RATE_LIMIT_DOWNGRADE_AFTER = 2;
 const MIN_PARSE_CONCURRENCY = 3;
 
 const DEFAULT_SETTINGS = {
-  // 默认走 DeepSeek 官方接口。模型名是 API id `deepseek-flash`
+  // v0.6.3：解析通道换成 DeepSeek 官方。模型名是 API id `deepseek-flash`
   // （/v1/models 里 name = "DeepSeek-V4.1-Flash"，写 v4.1-flash 会被 400 拒）。
-  // 这三项都可在弹窗的「模型配置」里改。
   apiEndpoint: 'https://api.deepseek.com/v1/chat/completions',
-  // 不内置任何密钥。首次使用请在「模型配置」里填入自己的 API Key。
-  apiToken: '',
+  apiToken: '',  // 开源版不内置密钥：首次安装为空，使用者在扩展内填入自己的 DeepSeek API Key
   modelName: 'deepseek-flash',
   apiMode: 'chat-completions',
   skillVersion: 'judicial-auction-extractor/0.1',
   skillPrompt: '',
-  // 报表标题里的品牌名，默认空 → 报表标题用中性文案「法拍房源汇总（M月D日）」。
-  reportBrand: '',
   parseConcurrency: DEFAULT_PARSE_CONCURRENCY,
-  // 批量采集的并发度。改这个值不用重装扩展，在「模型配置」或 storage.local 里改一次即可。
+  // v0.6.0：批量采集的并发度。改这个值不用重装扩展，
+  // 在 storage.local 里写一次就生效（弹窗管理页也能改）。
   captureConcurrency: DEFAULT_CAPTURE_CONCURRENCY,
-  // 详情页用可见标签打开，风控/验证码时等你人工过掉再继续采。
+  // v0.6.4：详情页用可见标签打开，风控/验证码时等你人工过掉再继续采。
   // 设为 false 就退回「后台标签 + 遇到风控直接判失败」的老行为。
   manualVerify: true,
   // 遇到风控/登录页后最多等你多久去过验证（毫秒）。默认 3 分钟。
@@ -1002,32 +1002,65 @@ let rateLimitHandler = null;
 function setRateLimitHandler(fn) { rateLimitHandler = fn; }
 function resetRateLimitStreak() { rateLimitStreak = 0; }
 
-// 读取模型配置。开源版由用户在“模型配置”卡片里自行填写，
-// 不再有任何内置预置或历史通道迁移逻辑 —— 用户填什么就是什么，不会被自动覆盖。
-async function loadModelSettings() {
-  return chrome.storage.local.get(DEFAULT_SETTINGS);
+// 老预置识别：v0.6.3 起预置改成 DeepSeek 官方 + deepseek-flash。
+// 覆盖只在 runtime.onInstalled 且 presetVersion 不符时跑一次 —— 重载扩展并不一定触发它
+// （实测 Edge 就没触发，storage 里还留着 presetVersion=agnes-2026-09 / shuai-2026-10-30）。
+// 而 v0.5.5 已删掉设置页，界面无处可改，配置就永久锁死在旧通道上。
+// 所以这里按「内容」自愈：地址或模型只要还是 agnes / shuaiapi / gpt-5.6-sol，
+// 就覆盖回 DeepSeek 预置。
+const LEGACY_PRESET_RE = /agnes|shuaiapi|gpt-5\.6-sol/i;
+let presetMigration = null;
+
+function migrateLegacyPreset(settings) {
+  const legacy = LEGACY_PRESET_RE.test(settings.apiEndpoint || '') || LEGACY_PRESET_RE.test(settings.modelName || '');
+  if (!legacy) return Promise.resolve(settings);
+  if (!presetMigration) {
+    const patch = {
+      apiEndpoint: DEFAULT_SETTINGS.apiEndpoint,
+      apiToken: DEFAULT_SETTINGS.apiToken,
+      modelName: DEFAULT_SETTINGS.modelName,
+      apiMode: DEFAULT_SETTINGS.apiMode,
+    };
+    presetMigration = (async () => {
+      await chrome.storage.local.set(patch);
+      await logEvent('warn', '配置迁移', `旧预置 ${settings.modelName || '未知模型'} 已切到 ${DEFAULT_SETTINGS.modelName}`, {
+        原地址: settings.apiEndpoint || '',
+        原模型: settings.modelName || '',
+      });
+      return patch;
+    })().catch((error) => { presetMigration = null; throw error; });
+  }
+  return presetMigration.then((patch) => ({ ...settings, ...patch }));
 }
 
-// 保存用户在「模型配置」里填的内容。只接受白名单字段，避免界面误写别的键。
-// apiToken 传空字符串表示清除；不传/undefined 表示保持原值不动。
-const SAVABLE_SETTINGS = ['apiEndpoint', 'apiToken', 'modelName', 'reportBrand'];
+// v0.9.2：打开并发 1 → 3 的一次性种子。
+// DEFAULT_SETTINGS 只补「缺省键」，storage 里已经钉着旧默认值 1 的不会被覆盖，
+// 所以这里用标记位补一刀：种子没写过、且当前值小于 3，就抬到 3 并写标记。
+// 写完之后主人自己再改回 1 不会被反复覆盖（标记位已存在）。
+const CAPTURE_CONCURRENCY_SEED_KEY = 'captureConcurrencySeed';
+let captureSeedInflight = null;
 
-async function saveModelSettings(patch = {}) {
-  const update = {};
-  for (const key of SAVABLE_SETTINGS) {
-    if (!(key in patch)) continue;
-    const raw = patch[key];
-    if (raw === undefined) continue;
-    const value = String(raw ?? '').trim();
-    update[key] = key === 'apiEndpoint' ? normalizeEndpoint(value) : value;
-  }
-  if (!Object.keys(update).length) return { ok: false, reason: 'nothing-to-save' };
-  await chrome.storage.local.set(update);
-  await logEvent('info', '保存模型配置', Object.keys(update).join(', '), {
-    模型: update.modelName || '', 地址: update.apiEndpoint || '',
-    已配置Key: Boolean(update.apiToken),
-  });
-  return { ok: true, saved: Object.keys(update) };
+function migrateCaptureConcurrency(settings) {
+  if (captureSeedInflight) return captureSeedInflight.then((patch) => ({ ...settings, ...patch }));
+  captureSeedInflight = (async () => {
+    const stored = await chrome.storage.local.get(CAPTURE_CONCURRENCY_SEED_KEY);
+    const seeded = stored[CAPTURE_CONCURRENCY_SEED_KEY] === CAPTURE_CONCURRENCY_SEED;
+    const current = Number(settings.captureConcurrency);
+    if (seeded) return {};
+    const patch = { [CAPTURE_CONCURRENCY_SEED_KEY]: CAPTURE_CONCURRENCY_SEED };
+    if (!Number.isFinite(current) || current < CAPTURE_CONCURRENCY_SEED) {
+      patch.captureConcurrency = CAPTURE_CONCURRENCY_SEED;
+    }
+    await chrome.storage.local.set(patch);
+    return patch;
+  })().catch((error) => { captureSeedInflight = null; throw error; });
+  return captureSeedInflight.then((patch) => ({ ...settings, ...patch }));
+}
+
+async function loadModelSettings() {
+  const settings = await chrome.storage.local.get(DEFAULT_SETTINGS);
+  const migrated = await migrateLegacyPreset(settings);
+  return migrateCaptureConcurrency(migrated);
 }
 
 // 并发解析时每条都会走一次「同步内置 MD」。10 并发就是 10 次 fetch + 哈希，
@@ -1598,3 +1631,63 @@ async function watermarkClear(lane) {
   await watermarkSave(wm);
   return wm;
 }
+
+// v0.9.3：水位可导入/导出。
+// 起因：扩展一旦换了「已解压扩展的目录路径」（比如从 Desktop\法拍插件 挪到
+// Desktop\插件\法拍插件），Chrome/Edge 会按路径重新算扩展 ID → storage 换了一整套，
+// 新 ID 下的 captureWatermark 是空的，界面上就显示「未记录」。
+// 老数据还在旧 ID 的 LevelDB 里（没被删），但插件本身没界面能读回来。
+// 导出能在每次水位提交后自动落一份到文件，导入能把 JSON 塞回当前 ID。
+//
+// 文件格式（同时兼容整份 storage 备份）：
+//   { "version":1, "lanes":{ "ali|住宅":{...} } }        ← 只管水位
+//   { "captureWatermark": { "version":1,"lanes":{...} } } ← 整份 storage 备份，自动取里层
+async function watermarkExportPayload() {
+  return watermarkLoad();
+}
+
+// 把任意 JSON 文本/对象归一成合法的水位结构。
+// 返回 { ok, wm, lanes, error }
+function watermarkNormalizeImport(raw) {
+  let data = raw;
+  if (typeof raw === 'string') {
+    try { data = JSON.parse(raw); } catch { return { ok: false, error: '不是合法 JSON' }; }
+  }
+  if (!data || typeof data !== 'object') return { ok: false, error: '内容不是对象' };
+  // 整份 storage 备份：取里层
+  if (data.captureWatermark && typeof data.captureWatermark === 'object') data = data.captureWatermark;
+  const lanes = data.lanes;
+  if (!lanes || typeof lanes !== 'object' || Array.isArray(lanes)) {
+    return { ok: false, error: '没有 lanes 字段（这不是水位文件）' };
+  }
+  const clean = {};
+  for (const [lane, rec] of Object.entries(lanes)) {
+    if (!rec || typeof rec !== 'object') continue;
+    const anchorId = String(rec.anchor_id || '').trim();
+    if (!anchorId) continue;
+    clean[lane] = {
+      anchor_id: anchorId,
+      anchor_rank: Number(rec.anchor_rank) || 1,
+      anchor_title: String(rec.anchor_title || '').slice(0, 120),
+      at: String(rec.at || new Date().toISOString()),
+      total: Number(rec.total) || 0,
+      last_batch: Number(rec.last_batch) || 0,
+    };
+  }
+  const keys = Object.keys(clean);
+  if (!keys.length) return { ok: false, error: 'lanes 里没有任何有效锚点（anchor_id 全为空）' };
+  return { ok: true, wm: { version: WATERMARK_SCHEMA_VERSION, lanes: clean }, lanes: keys };
+}
+
+// merge=true 时按通道逐个合并（导入优先），false 时整体替换。
+async function watermarkImport(raw, { merge = true } = {}) {
+  const norm = watermarkNormalizeImport(raw);
+  if (!norm.ok) return norm;
+  const current = await watermarkLoad();
+  const next = merge
+    ? { version: WATERMARK_SCHEMA_VERSION, lanes: { ...current.lanes, ...norm.wm.lanes } }
+    : norm.wm;
+  await watermarkSave(next);
+  return { ok: true, lanes: Object.keys(norm.wm.lanes), mode: merge ? 'merge' : 'replace', wm: next };
+}
+

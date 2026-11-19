@@ -5,18 +5,18 @@ const PARSE_TASK_KEY = 'parseTask';
 const KEEPALIVE_ALARM = 'pool-parse-keepalive';
 const CAPTURE_TASK_KEY = 'captureTask';
 const CAPTURE_KEEPALIVE_ALARM = 'pool-capture-keepalive';
+const PRESET_VERSION = 'deepseek-2026-11-10';
 
 // 与 common.js 的 BUILD_STAMP 同源。握手时回给界面，用来识破
 // 「浏览器跑的是缓存的旧脚本」这种情况（见 common.js 第 1.5 节）。
 const WORKER_BUILD = BUILD_STAMP;
 
 const defaults = {
-  // 默认走 DeepSeek 官方接口。模型名必须是 API id `deepseek-flash`
-  // （/v1/models 里它的 name 才是 "DeepSeek-V4.1-Flash"）；写 deepseek-v4.1-flash 会被 400 拒绝。
-  // 这些只是首次安装的初始值，用户可在弹窗「模型配置」里随时修改，之后不会被覆盖。
+  // v0.6.3：解析通道从 shuaiapi(帅) 换成 DeepSeek 官方。
+  // 模型名必须是 API id `deepseek-flash`（/v1/models 里它的 name 才是
+  // "DeepSeek-V4.1-Flash"）；写 deepseek-v4.1-flash 会被 400 拒绝。
   apiEndpoint: 'https://api.deepseek.com/v1/chat/completions',
-  // 不内置任何密钥，首次安装为空，需用户自己填。
-  apiToken: '',
+  apiToken: '',  // 开源版不内置密钥：首次安装为空，使用者在扩展内填入自己的 DeepSeek API Key
   modelName: 'deepseek-flash',
   apiMode: 'chat-completions',
   skillVersion: 'judicial-auction-extractor/0.1',
@@ -31,10 +31,25 @@ chrome.runtime.onInstalled.addListener(async () => {
   // 每次安装 / 更新都核对内置规范 MD：内容变了就覆盖设置里的旧版，
   // 免得「磁盘上已改规范、浏览器里还在按旧 md 抽字段」。
   await syncBuiltinMd().catch(() => {});
-  // 只补齐缺失的键，绝不覆盖用户已填的值（尤其 apiToken / apiEndpoint）。
   const existing = await chrome.storage.local.get(Object.keys(defaults));
   const missing = Object.fromEntries(Object.entries(defaults).filter(([key]) => existing[key] === undefined));
   if (Object.keys(missing).length) await chrome.storage.local.set(missing);
+
+  // 预置配置只强制覆盖一次；之后在设置页里的手改不会再被盖掉。
+  const { presetVersion } = await chrome.storage.local.get('presetVersion');
+  if (presetVersion !== PRESET_VERSION) {
+    await chrome.storage.local.set({
+      apiEndpoint: defaults.apiEndpoint,
+      apiToken: defaults.apiToken,
+      modelName: defaults.modelName,
+      apiMode: defaults.apiMode,
+      parseConcurrency: defaults.parseConcurrency,
+      presetVersion: PRESET_VERSION,
+    });
+  }
+  // v0.5.1 起采集一律只入池；旧版留下的「采集后自动解析」开关值直接清掉，
+  // 免得缓存里的老弹窗读到 true 又自行开解析。
+  await chrome.storage.local.remove('autoParseAfterBatch').catch(() => {});
   refreshBadge();
 });
 
@@ -111,11 +126,6 @@ async function startParseTask(ids = null) {
   if (!settings.apiEndpoint) {
     logEvent('warn', '解析未启动', '还没配置模型 API 地址');
     return { ok: false, reason: 'no-endpoint' };
-  }
-  // 开源版不内置密钥：没填就直接返回明确原因，别让整批请求跑成一串 401。
-  if (!String(settings.apiToken || '').trim()) {
-    logEvent('warn', '解析未启动', '还没填 DeepSeek API Key');
-    return { ok: false, reason: 'no-token', error: '还没填 DeepSeek API Key，请先在弹窗「DeepSeek 密钥」里填入。' };
   }
 
   const pool = await poolLoad();
@@ -297,11 +307,14 @@ async function startCaptureWindow(windowId = null) {
   try {
     const { targets, skipped, total } = await pickCaptureTargets(windowId);
     if (!targets.length) return { ok: false, reason: 'nothing-to-capture', skipped, scanned: total };
+    const settings = await loadModelSettings();
     const options = await chrome.storage.local.get({
       includeHtml: false, includeJson: true,
       captureConcurrency: DEFAULT_CAPTURE_CONCURRENCY,
     });
-    const settings = await loadModelSettings();
+    // v0.9.2：以 loadModelSettings() 为准（它带一次性种子迁移）。直接在 storage.get
+    // 里取默认值会绕过种子，老 profile 钉着 1 的话这一轮又跑回串行。
+    options.captureConcurrency = clampCaptureConcurrency(settings.captureConcurrency);
     applyVerifySettings(settings);
 
     captureStopRequested = false;
@@ -344,6 +357,8 @@ async function startSortBatch(urls = []) {
     captureConcurrency: DEFAULT_CAPTURE_CONCURRENCY,
   });
   const settings = await loadModelSettings();
+  // 同上：并发以 settings 为准（含一次性种子迁移）。
+  captureOptions.captureConcurrency = clampCaptureConcurrency(settings.captureConcurrency);
   applyVerifySettings(settings);
   captureStopRequested = false;
   try { await chrome.alarms.create(CAPTURE_KEEPALIVE_ALARM, { periodInMinutes: 0.5 }); } catch { /* 忽略 */ }
@@ -516,11 +531,11 @@ function applyVerifySettings(settings) {
 // 并发度的默认值与上下限定义在 common.js（DEFAULT_CAPTURE_CONCURRENCY /
 // MAX_CAPTURE_CONCURRENCY / MIN_CAPTURE_CONCURRENCY），这里 importScripts 已带入，
 // 不要再声明一遍 —— 同一个 const 名字声明两次会让整个 service worker 语法报错。
-// 想调并发：改 storage.local 里的 captureConcurrency（1~10，默认 6）。
+// 想调并发：改 storage.local 里的 captureConcurrency（1~10，v0.9.2 起默认 3）。
 const CAPTURE_GAP_MS = [400, 900];   // 每个 worker 采完一条后的间隔（带抖动）
 // v0.6.4：熔断阈值放宽到 10。
 // 以前是 4 —— 但并发 6 一开，4 条风控失败就把整批掐死，10 条的批次只采到 5 条。
-// 现在默认串行 + 人工过验证，连续失败基本只有「真的被整站封了」才会发生。
+// 现在默认并发 3 + 人工过验证，连续失败基本只有「真的被整站封了」才会发生。
 const MAX_CONSECUTIVE_FAILURES = 10;
 
 // 读出实际要用的并发度：settings.captureConcurrency 优先，夹在 [1,10] 之间。
@@ -688,7 +703,9 @@ async function waitForAuctionReady(tabId, timeoutMs = READY_TIMEOUT_MS) {
         if (!gateSince) gateSince = Date.now();
         if (!gateLogged) {
           gateLogged = true;
-          await logEvent('warn', '等待人工验证', '详情页停在登录/验证页；请在浏览器里过掉验证，插件会自动接着采', {
+          // 不抢焦点：标签在后台打开，撞到验证墙就停在这里傻等主人自己切过去点掉，
+          // 行为跟串行一样——只记日志、不弹前台、不跳过，过了验证继续采。
+          await logEvent('warn', '等待人工验证', '详情页停在登录/验证页（后台标签）；请切到该标签过掉验证，插件会自动接着采', {
             链接: probe.url || '', 最长等待秒: Math.round(MANUAL_VERIFY_WAIT_MS / 1000),
           });
         }
@@ -924,7 +941,7 @@ async function runSortBatch(urls, options, settings) {
 async function runCaptureLoop(targets, options, settings, skipped) {
   let done = 0;
   let failed = 0;
-  // 与截止点采集用同一个并发度来源（storage 里的 captureConcurrency，默认 6）。
+  // 与截止点采集用同一个并发度来源（settings.captureConcurrency，v0.9.2 起默认 3）。
   const cap = Math.max(1, Math.min(clampCaptureConcurrency(settings.captureConcurrency), targets.length));
   let cursor = 0;
 
